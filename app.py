@@ -10,7 +10,7 @@ app = Flask(__name__)
 # 1. قائمة الأصناف مرتبة أبجدياً (نفس ترتيب مجلد train)
 classes_list = [
     'Actinic keratoses', 'Basal cell carcinoma', 'Benign keratosis',
-    'Chickenpox', 'Cowpox', 'Dermatofibroma', 'HFMD', 'Healthy',
+    'Chickenpox', 'Cowpox', 'Dermatofibroma', 'Healthy', 'HFMD',
     'Measles', 'Melanocytic nevi', 'Melanoma', 'Monkeypox',
     'Squamous cell carcinoma', 'Vascular lesions'
 ]
