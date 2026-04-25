@@ -1,3 +1,11 @@
+# =========================
+# INSTALL (Colab)
+# =========================
+!pip install torch torchvision datasets tqdm pillow
+
+# =========================
+# IMPORTS
+# =========================
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -9,7 +17,7 @@ from tqdm import tqdm
 from PIL import Image
 
 # =========================
-# CONFIG 🔥
+# CONFIG
 # =========================
 BATCH_SIZE = 32
 EPOCHS = 40
@@ -18,7 +26,7 @@ LR = 1e-4
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # =========================
-# AUGMENTATION 🔥🔥
+# TRANSFORMS
 # =========================
 train_transform = transforms.Compose([
     transforms.RandomResizedCrop(224),
@@ -36,10 +44,33 @@ val_transform = transforms.Compose([
 ])
 
 # =========================
-# DATA 🔥
+# LOAD DATA
 # =========================
 dataset = load_dataset("ahmed-ai/skin-lesions-classification-dataset")
 
+# ⚠️ healthy = 6 (كما قلت)
+healthy_label = 6
+
+# =========================
+# REMOVE HEALTHY
+# =========================
+train_data = dataset["train"].filter(lambda x: x["label"] != healthy_label)
+val_data = dataset["validation"].filter(lambda x: x["label"] != healthy_label)
+
+# =========================
+# REMAP LABELS (مهم)
+# =========================
+def remap(example):
+    if example["label"] > healthy_label:
+        example["label"] -= 1
+    return example
+
+train_data = train_data.map(remap)
+val_data = val_data.map(remap)
+
+# =========================
+# DATASET CLASS
+# =========================
 class MyDataset(torch.utils.data.Dataset):
     def __init__(self, data, transform=None):
         self.data = data
@@ -61,15 +92,15 @@ class MyDataset(torch.utils.data.Dataset):
 
         return img, label
 
-train_ds = MyDataset(dataset["train"], train_transform)
-val_ds = MyDataset(dataset["validation"], val_transform)
+train_ds = MyDataset(train_data, train_transform)
+val_ds = MyDataset(val_data, val_transform)
 
 # =========================
-# BALANCE 🔥
+# SAMPLER
 # =========================
-targets = [dataset["train"][i]["label"] for i in range(len(dataset["train"]))]
-
+targets = [train_data[i]["label"] for i in range(len(train_data))]
 counts = Counter(targets)
+
 weights = 1. / torch.tensor([counts[i] for i in range(len(counts))], dtype=torch.float)
 samples_weights = weights[targets]
 
@@ -79,11 +110,11 @@ train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, sampler=sampler)
 val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE)
 
 # =========================
-# MODEL 🔥🔥🔥 (EfficientNet)
+# MODEL
 # =========================
 model = models.efficientnet_b0(weights="IMAGENET1K_V1")
 
-# Freeze first layers
+# Freeze شوية layers
 for param in model.features[:5].parameters():
     param.requires_grad = False
 
@@ -91,13 +122,13 @@ model.classifier[1] = nn.Sequential(
     nn.Linear(model.classifier[1].in_features, 512),
     nn.ReLU(),
     nn.Dropout(0.5),
-    nn.Linear(512, 14)
+    nn.Linear(512, 13)  # 🔥 13 classes
 )
 
 model.to(device)
 
 # =========================
-# OPTIMIZER 🔥
+# OPTIMIZER
 # =========================
 optimizer = optim.Adam(model.parameters(), lr=LR)
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=2)
@@ -105,20 +136,20 @@ scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=2)
 criterion = nn.CrossEntropyLoss()
 
 # =========================
-# TRAIN 🔥🔥🔥
+# TRAINING
 # =========================
 best_acc = 0
 
 for epoch in range(EPOCHS):
     print(f"\n===== Epoch {epoch+1}/{EPOCHS} =====")
 
-    # 🔓 Unfreeze بعد 5 epochs
+    # Unfreeze بعد 5 epochs
     if epoch == 5:
         for param in model.features.parameters():
             param.requires_grad = True
         print("🔥 Unfreezing all layers")
 
-    # ===== TRAIN =====
+    # TRAIN
     model.train()
     correct, total = 0, 0
 
@@ -142,7 +173,7 @@ for epoch in range(EPOCHS):
     train_acc = 100 * correct / total
     print(f"🎯 Train Acc: {train_acc:.2f}%")
 
-    # ===== VALIDATION =====
+    # VALIDATION
     model.eval()
     correct, total = 0, 0
 
@@ -161,7 +192,6 @@ for epoch in range(EPOCHS):
 
     scheduler.step(val_acc)
 
-    # SAVE BEST
     if val_acc > best_acc:
         best_acc = val_acc
         torch.save(model.state_dict(), "best_model.pth")
