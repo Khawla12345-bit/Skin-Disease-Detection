@@ -1,7 +1,5 @@
 # =========================
-# INSTALL (Colab)
-# =========================
-!pip install torch torchvision datasets tqdm pillow
+
 
 # =========================
 # IMPORTS
