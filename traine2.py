@@ -14,7 +14,7 @@ from PIL import Image
 torch.manual_seed(42)  # ✅ Reproducibility
 
 BATCH_SIZE = 32
-EPOCHS = 40
+EPOCHS = 20
 LR = 1e-4
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 EARLY_STOP_PATIENCE = 7  # ✅ Early Stopping
