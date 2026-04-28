@@ -15,18 +15,13 @@ import os
 torch.manual_seed(42)
 
 BATCH_SIZE = 32
-EPOCHS = 15
+EPOCHS = 40
 LR = 1e-4
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 EARLY_STOP_PATIENCE = 7
 
-# ✅ Google Drive باش تحفظ فيه
-from google.colab import drive
-drive.mount('/content/drive')
-SAVE_DIR = "/content/drive/MyDrive/skin_model/"
+SAVE_DIR = "/content/skin_model/"
 os.makedirs(SAVE_DIR, exist_ok=True)
-
-CHECKPOINT_PATH = SAVE_DIR + "checkpoint.pth"
 BEST_MODEL_PATH = SAVE_DIR + "best_model.pth"
 
 # =========================
@@ -115,35 +110,12 @@ optimizer = optim.AdamW(model.parameters(), lr=LR, weight_decay=0.05)
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', patience=3, factor=0.5)
 
 # =========================
-# 6. ✅ LOAD CHECKPOINT إذا موجود
+# 6. TRAINING LOOP
 # =========================
 best_acc = 0
 early_stop_counter = 0
-start_epoch = 0
 
-if os.path.exists(CHECKPOINT_PATH):
-    print("🔄 Checkpoint trouvé! Chargement...")
-    checkpoint = torch.load(CHECKPOINT_PATH, map_location=DEVICE)
-    model.load_state_dict(checkpoint['model_state'])
-    optimizer.load_state_dict(checkpoint['optimizer_state'])
-    scheduler.load_state_dict(checkpoint['scheduler_state'])
-    start_epoch = checkpoint['epoch'] + 1
-    best_acc = checkpoint['best_acc']
-    early_stop_counter = checkpoint['early_stop_counter']
-
-    # ✅ إذا كان unfreeze صار — نعيد تطبيقه
-    if start_epoch > 5:
-        for param in model.parameters():
-            param.requires_grad = True
-
-    print(f"✅ Reprise depuis Epoch {start_epoch+1} | Best Acc: {best_acc:.2f}%")
-else:
-    print("🆕 Démarrage from scratch...")
-
-# =========================
-# 7. TRAINING LOOP
-# =========================
-for epoch in range(start_epoch, EPOCHS):
+for epoch in range(EPOCHS):
     print(f"\n--- Epoch {epoch+1}/{EPOCHS} ---")
 
     if epoch == 5:
@@ -200,7 +172,6 @@ for epoch in range(start_epoch, EPOCHS):
 
     scheduler.step(avg_val_acc)
 
-    # ✅ Save best model
     if avg_val_acc > best_acc:
         best_acc = avg_val_acc
         early_stop_counter = 0
@@ -212,16 +183,5 @@ for epoch in range(start_epoch, EPOCHS):
         if early_stop_counter >= EARLY_STOP_PATIENCE:
             print(f"\n🛑 Early Stopping! Best Val Acc: {best_acc:.2f}%")
             break
-
-    # ✅ Save checkpoint بعد كل epoch
-    torch.save({
-        'epoch': epoch,
-        'model_state': model.state_dict(),
-        'optimizer_state': optimizer.state_dict(),
-        'scheduler_state': scheduler.state_dict(),
-        'best_acc': best_acc,
-        'early_stop_counter': early_stop_counter,
-    }, CHECKPOINT_PATH)
-    print(f"💾 Checkpoint saved (Epoch {epoch+1})")
 
 print(f"\n🏆 Finished! Best Val Accuracy: {best_acc:.2f}%")
