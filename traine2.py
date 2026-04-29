@@ -15,14 +15,10 @@ import os
 torch.manual_seed(42)
 
 BATCH_SIZE = 32
-EPOCHS = 40
+EPOCHS = 15
 LR = 1e-4
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 EARLY_STOP_PATIENCE = 7
-
-SAVE_DIR = "/content/skin_model/"
-os.makedirs(SAVE_DIR, exist_ok=True)
-BEST_MODEL_PATH = SAVE_DIR + "best_model.pth"
 
 # =========================
 # 2. DATA AUGMENTATION
@@ -35,7 +31,8 @@ train_transform = transforms.Compose([
     transforms.RandomRotation(30),
     transforms.RandomGrayscale(p=0.1),
     transforms.ToTensor(),
-    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+    transforms.RandomErasing(p=0.3),
 ])
 
 val_transform = transforms.Compose([
@@ -97,16 +94,20 @@ model.classifier[1] = nn.Sequential(
     nn.Linear(num_ftrs, 512),
     nn.BatchNorm1d(512),
     nn.ReLU(),
-    nn.Dropout(0.5),
-    nn.Linear(512, NUM_CLASSES)
+    nn.Dropout(0.6),
+    nn.Linear(512, 256),
+    nn.BatchNorm1d(256),
+    nn.ReLU(),
+    nn.Dropout(0.4),
+    nn.Linear(256, NUM_CLASSES)
 )
 model.to(DEVICE)
 
 # =========================
 # 5. LOSS & OPTIMIZER
 # =========================
-criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
-optimizer = optim.AdamW(model.parameters(), lr=LR, weight_decay=0.05)
+criterion = nn.CrossEntropyLoss(label_smoothing=0.15)
+optimizer = optim.AdamW(model.parameters(), lr=LR, weight_decay=0.1)
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', patience=3, factor=0.5)
 
 # =========================
@@ -169,13 +170,14 @@ for epoch in range(EPOCHS):
     print(f"\n📊 Results Epoch {epoch+1}:")
     print(f"   [Train] Loss: {avg_train_loss:.4f} | Acc: {avg_train_acc:.2f}%")
     print(f"   [Val]   Loss: {avg_val_loss:.4f} | Acc: {avg_val_acc:.2f}%")
+    print(f"   [Gap]   {abs(avg_train_acc - avg_val_acc):.2f}%")
 
     scheduler.step(avg_val_acc)
 
     if avg_val_acc > best_acc:
         best_acc = avg_val_acc
         early_stop_counter = 0
-        torch.save(model.state_dict(), BEST_MODEL_PATH)
+        torch.save(model.state_dict(), "best_model.pth")
         print(f"⭐ New Best Model Saved! ({best_acc:.2f}%)")
     else:
         early_stop_counter += 1
