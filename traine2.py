@@ -15,7 +15,7 @@ import os
 torch.manual_seed(42)
 
 BATCH_SIZE = 32
-EPOCHS = 15
+EPOCHS = 14
 LR = 1e-4
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 EARLY_STOP_PATIENCE = 7
