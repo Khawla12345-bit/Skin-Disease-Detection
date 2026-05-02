@@ -7,25 +7,32 @@ from datasets import load_dataset
 from collections import Counter
 from tqdm import tqdm
 from PIL import Image
+import os
 
 # =========================
 # 1. CONFIGURATION
 # =========================
+torch.manual_seed(42)
+
 BATCH_SIZE = 32
-EPOCHS = 20
+EPOCHS = 14
 LR = 1e-4
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+EARLY_STOP_PATIENCE = 7
 
 # =========================
-# 2. DATA AUGMENTATION (Avoid Overfitting)
+# 2. DATA AUGMENTATION
 # =========================
 train_transform = transforms.Compose([
     transforms.RandomResizedCrop(224, scale=(0.7, 1.0)),
     transforms.RandomHorizontalFlip(),
-    transforms.RandomVerticalFlip(), # مهم جداً لصور الجلد
+    transforms.RandomVerticalFlip(),
     transforms.ColorJitter(0.2, 0.2, 0.2, 0.1),
+    transforms.RandomRotation(30),
+    transforms.RandomGrayscale(p=0.1),
     transforms.ToTensor(),
-    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+    transforms.RandomErasing(p=0.3),
 ])
 
 val_transform = transforms.Compose([
@@ -63,22 +70,22 @@ class MyDataset(torch.utils.data.Dataset):
 train_ds = MyDataset(train_data, train_transform)
 val_ds = MyDataset(val_data, val_transform)
 
-# Sampler لتحقيق التوازن بين الأصناف
-targets = [train_data[i]["label"] for i in range(len(train_data))]
+targets = train_data["label"]
 counts = Counter(targets)
-weights = 1. / torch.tensor([counts[i] for i in range(len(counts))], dtype=torch.float)
+NUM_CLASSES = len(counts)
+
+weights = 1. / torch.tensor([counts[i] for i in range(NUM_CLASSES)], dtype=torch.float)
 samples_weights = weights[targets]
 sampler = WeightedRandomSampler(samples_weights, len(samples_weights))
 
-train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, sampler=sampler)
-val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE)
+train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, sampler=sampler, num_workers=2, pin_memory=True)
+val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE, num_workers=2, pin_memory=True)
 
 # =========================
-# 4. MODEL (EfficientNet-V2-S)
+# 4. MODEL
 # =========================
 model = models.efficientnet_v2_s(weights="IMAGENET1K_V1")
 
-# Freeze early layers initially
 for param in model.features[:4].parameters():
     param.requires_grad = False
 
@@ -87,67 +94,71 @@ model.classifier[1] = nn.Sequential(
     nn.Linear(num_ftrs, 512),
     nn.BatchNorm1d(512),
     nn.ReLU(),
+    nn.Dropout(0.6),
+    nn.Linear(512, 256),
+    nn.BatchNorm1d(256),
+    nn.ReLU(),
     nn.Dropout(0.4),
-    nn.Linear(512, 13) 
+    nn.Linear(256, NUM_CLASSES)
 )
 model.to(DEVICE)
 
 # =========================
 # 5. LOSS & OPTIMIZER
 # =========================
-# Label Smoothing تساعد الموديل باش ما يحفظش الصور حرفياً
-criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
-optimizer = optim.AdamW(model.parameters(), lr=LR, weight_decay=0.05)
+criterion = nn.CrossEntropyLoss(label_smoothing=0.15)
+optimizer = optim.AdamW(model.parameters(), lr=LR, weight_decay=0.1)
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', patience=3, factor=0.5)
 
 # =========================
 # 6. TRAINING LOOP
 # =========================
 best_acc = 0
+early_stop_counter = 0
 
 for epoch in range(EPOCHS):
     print(f"\n--- Epoch {epoch+1}/{EPOCHS} ---")
-    
-    # Unfreeze all layers after epoch 5 for fine-tuning
+
     if epoch == 5:
         for param in model.parameters():
             param.requires_grad = True
-        print("🔓 Unfrozen all layers for fine-tuning...")
+        for g in optimizer.param_groups:
+            g['lr'] = LR * 0.1
+        print("🔓 Unfrozen all layers | LR reduced...")
 
-    # --- TRAIN PHASE ---
+    # --- TRAIN ---
     model.train()
     train_loss, train_correct, train_total = 0, 0, 0
-    
+
     loop = tqdm(train_loader, desc="Training")
     for imgs, labels in loop:
         imgs, labels = imgs.to(DEVICE), labels.to(DEVICE)
-        
+
         optimizer.zero_grad()
         outputs = model(imgs)
         loss = criterion(outputs, labels)
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
-        
+
         train_loss += loss.item() * imgs.size(0)
         _, preds = torch.max(outputs, 1)
         train_total += labels.size(0)
         train_correct += (preds == labels).sum().item()
-        
         loop.set_postfix(loss=loss.item(), acc=100*train_correct/train_total)
 
     avg_train_loss = train_loss / train_total
     avg_train_acc = 100 * train_correct / train_total
 
-    # --- VAL PHASE ---
+    # --- VAL ---
     model.eval()
     val_loss, val_correct, val_total = 0, 0, 0
-    
+
     with torch.no_grad():
         for imgs, labels in val_loader:
             imgs, labels = imgs.to(DEVICE), labels.to(DEVICE)
             outputs = model(imgs)
             loss = criterion(outputs, labels)
-            
             val_loss += loss.item() * imgs.size(0)
             _, preds = torch.max(outputs, 1)
             val_total += labels.size(0)
@@ -156,16 +167,23 @@ for epoch in range(EPOCHS):
     avg_val_loss = val_loss / val_total
     avg_val_acc = 100 * val_correct / val_total
 
-    # --- PRINT RESULTS ---
     print(f"\n📊 Results Epoch {epoch+1}:")
     print(f"   [Train] Loss: {avg_train_loss:.4f} | Acc: {avg_train_acc:.2f}%")
     print(f"   [Val]   Loss: {avg_val_loss:.4f} | Acc: {avg_val_acc:.2f}%")
+    print(f"   [Gap]   {abs(avg_train_acc - avg_val_acc):.2f}%")
 
     scheduler.step(avg_val_acc)
 
     if avg_val_acc > best_acc:
         best_acc = avg_val_acc
+        early_stop_counter = 0
         torch.save(model.state_dict(), "best_model.pth")
         print(f"⭐ New Best Model Saved! ({best_acc:.2f}%)")
+    else:
+        early_stop_counter += 1
+        print(f"⏳ No improvement ({early_stop_counter}/{EARLY_STOP_PATIENCE})")
+        if early_stop_counter >= EARLY_STOP_PATIENCE:
+            print(f"\n🛑 Early Stopping! Best Val Acc: {best_acc:.2f}%")
+            break
 
-print(f"\n🏆 Training Finished! Final Best Accuracy: {best_acc:.2f}%")
+print(f"\n🏆 Finished! Best Val Accuracy: {best_acc:.2f}%")
