@@ -7,29 +7,53 @@ import torch.nn.functional as F
 
 app = Flask(__name__)
 
-# 1. قائمة الأصناف مرتبة أبجدياً (نفس ترتيب مجلد train)
+# ❗ نفس الكلاسات بدون Healthy (كما في training)
 classes_list = [
-    'Actinic keratoses', 'Basal cell carcinoma', 'Benign keratosis',
-    'Chickenpox', 'Cowpox', 'Dermatofibroma', 'Healthy', 'HFMD',
-    'Measles', 'Melanocytic nevi', 'Melanoma', 'Monkeypox',
-    'Squamous cell carcinoma', 'Vascular lesions'
+    'Actinic keratoses',
+    'Basal cell carcinoma',
+    'Benign keratosis',
+    'Chickenpox',
+    'Cowpox',
+    'Dermatofibroma',
+    'HFMD',
+    'Measles',
+    'Melanocytic nevi',
+    'Melanoma',
+    'Monkeypox',
+    'Squamous cell carcinoma',
+    'Vascular lesions'
 ]
 
-# 2. إعداد الموديل (لازم يكون MobileNetV2 كما في التدريب)
-device = torch.device('cpu')
-model = models.mobilenet_v2(weights=None)
-model.classifier[1] = nn.Linear(model.last_channel, 14) # 14 صنف
+NUM_CLASSES = len(classes_list)
 
-# تحميل الأوزان (استعمال weights_only=True لتفادي التحذير)
-checkpoint = torch.load("best_model.pth", map_location=device, weights_only=True)
-model.load_state_dict(checkpoint)
+# ✅ نفس الموديل EXACTLY كما في training
+device = torch.device("cpu")
+
+model = models.efficientnet_v2_s(weights=None)
+
+num_ftrs = model.classifier[1].in_features
+model.classifier[1] = nn.Sequential(
+    nn.Linear(num_ftrs, 512),
+    nn.BatchNorm1d(512),
+    nn.ReLU(),
+    nn.Dropout(0.6),
+    nn.Linear(512, 256),
+    nn.BatchNorm1d(256),
+    nn.ReLU(),
+    nn.Dropout(0.4),
+    nn.Linear(256, NUM_CLASSES)
+)
+
+# تحميل weights
+model.load_state_dict(torch.load("best_modell.pth", map_location=device))
 model.eval()
 
-# 3. التحويلات (Transforms)
+# نفس transform تاع validation
 transform = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
-    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    transforms.Normalize([0.485, 0.456, 0.406],
+                         [0.229, 0.224, 0.225])
 ])
 
 @app.route('/')
@@ -49,7 +73,6 @@ def predict():
         outputs = model(image)
         probs = F.softmax(outputs, dim=1)
 
-    # الحصول على أفضل 3 نتائج
     top3_prob, top3_idx = torch.topk(probs, 3)
 
     results = []
